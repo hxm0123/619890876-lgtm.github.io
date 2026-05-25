@@ -1,0 +1,240 @@
+# ============================
+# 论文复现：Ding et al. (2025) Water Resources Research
+# 流域径流变化控制因素分析：SWAT + XGBoost/RF + SHAP + 情景模拟
+# 运行环境：Positron (RStudio) + R 4.2+
+# ============================
+
+# 1. 安装与加载必要的包 -----------------------------------------------
+required_packages <- c(
+  "tidyverse",   # 数据处理与可视化
+  "xgboost",     # XGBoost 模型
+  "randomForest",# 随机森林模型
+  "shapviz",     # SHAP 值计算与可视化
+  "hydroGOF",    # 水文模型评价指标 (NSE, KGE, PBIAS)
+  "trend",       # Pettitt 突变检验
+  "caret",       # 数据划分与模型训练
+  "ggplot2",     # 绘图
+  "patchwork"    # 图组合
+)
+
+install_if_missing <- function(pkg) {
+  if (!require(pkg, character.only = TRUE)) {
+    install.packages(pkg)
+    library(pkg, character.only = TRUE)
+  }
+}
+invisible(lapply(required_packages, install_if_missing))
+
+# 2. 模拟数据生成（替代实际SWAT输出，实际使用时请替换为真实数据）-------------------
+set.seed(2025)
+n_subbasins <- 20          # 子流域数量
+n_years <- 39              # 1982-2020
+n <- n_subbasins * n_years
+
+# 模拟特征变量（参考表2）
+sim_data <- data.frame(
+  ESBU_ID = rep(1:n_subbasins, each = n_years),
+  Year = rep(1982:2020, times = n_subbasins),
+  # 气候因子
+  Precipitation = runif(n, 400, 700),          # mm
+  Temperature = runif(n, 4, 8),                # °C
+  # 土地利用占比 (%)
+  Cropland = runif(n, 5, 40),
+  Forest = runif(n, 20, 60),
+  Shrub = runif(n, 0, 10),
+  Grassland = runif(n, 10, 50),
+  Water = runif(n, 0, 2),
+  Barren = runif(n, 0, 5),
+  Wetland = runif(n, 0, 3),
+  Impervious = runif(n, 0, 15),
+  Area = runif(n, 0.5, 5)                     # 相对面积比例
+)
+
+# 模拟目标变量：径流 (m³/s)，基于非线性关系合成
+# 使数据更接近真实水文响应
+sim_data$Streamflow <- with(sim_data, 
+  0.5 * Area +
+  0.3 * Precipitation / 100 +
+  0.1 * Cropland / 50 -
+  0.2 * Grassland / 50 +
+  0.05 * Impervious +
+  rnorm(n, 0, 5)
+)
+
+# 3. 数据划分：按每个ESBU保留70%训练，30%验证 ----------------------------
+train_list <- list()
+test_list <- list()
+
+for (id in unique(sim_data$ESBU_ID)) {
+  sub_data <- sim_data[sim_data$ESBU_ID == id, ]
+  train_idx <- sample(1:nrow(sub_data), size = 0.7 * nrow(sub_data))
+  train_list[[id]] <- sub_data[train_idx, ]
+  test_list[[id]] <- sub_data[-train_idx, ]
+}
+
+train_data <- do.call(rbind, train_list)
+test_data <- do.call(rbind, test_list)
+
+# 特征与目标
+features <- c("Precipitation", "Temperature", "Cropland", "Forest", "Shrub",
+              "Grassland", "Water", "Barren", "Wetland", "Impervious", "Area")
+X_train <- train_data[, features]
+y_train <- train_data$Streamflow
+X_test <- test_data[, features]
+y_test <- test_data$Streamflow
+
+# 4. 模型训练 ---------------------------------------------------------
+# 4.1 XGBoost
+dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = y_train)
+dtest <- xgb.DMatrix(data = as.matrix(X_test), label = y_test)
+
+params <- list(
+  objective = "reg:squarederror",
+  max_depth = 6,
+  eta = 0.1,
+  nrounds = 100,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+xgb_model <- xgb.train(params = params, data = dtrain, nrounds = 100,
+                       watchlist = list(train = dtrain), verbose = 0)
+
+# 4.2 Random Forest
+rf_model <- randomForest(x = X_train, y = y_train, ntree = 500, importance = TRUE)
+
+# 5. 模型评价 ----------------------------------------------------------
+evaluate_model <- function(obs, sim, model_name) {
+  data.frame(
+    Model = model_name,
+    R2 = cor(obs, sim)^2,
+    NSE = NSE(sim, obs),
+    KGE = KGE(sim, obs),
+    PBIAS = pbias(sim, obs)
+  )
+}
+
+# 预测
+pred_xgb <- predict(xgb_model, dtest)
+pred_rf <- predict(rf_model, X_test)
+
+# 评价
+eval_xgb <- evaluate_model(y_test, pred_xgb, "XGBoost")
+eval_rf <- evaluate_model(y_test, pred_rf, "Random Forest")
+eval_table <- rbind(eval_xgb, eval_rf)
+print(eval_table)
+
+# 6. SHAP 分析 --------------------------------------------------------
+# 使用 shapviz 包计算 SHAP 值
+shp <- shapviz(xgb_model, X_pred = as.matrix(X_test), X = as.matrix(X_test))
+
+# 6.1 总体重要性图（类似图9）
+sv_importance(shp, kind = "both") + ggtitle("Feature Importance (SHAP)")
+
+# 6.2 依赖图（类似图10）——例如 Precipitation
+sv_dependence(shp, v = "Precipitation", color_var = "Temperature") +
+  ggtitle("SHAP dependence: Precipitation")
+
+# 批量生成关键变量的依赖图
+vars_plot <- c("Precipitation", "Grassland", "Cropland", "Forest", "Area")
+dep_plots <- lapply(vars_plot, function(v) {
+  sv_dependence(shp, v = v, alpha = 0.6) + ggtitle(paste("SHAP for", v))
+})
+wrap_plots(dep_plots, ncol = 2)
+
+# 7. 交互效应分析（类似图11-12）----------------------------------------
+# 使用 sv_interaction 计算交互效应
+interact <- sv_interaction(shp)
+sv_importance(interact, kind = "both") + ggtitle("Interaction Effects")
+
+# 自定义交互效应图：例如 Cropland 与 Forest
+interaction_plot_data <- shapviz:::shapviz2df(shp, "long")
+ggplot(interaction_plot_data, aes(x = Cropland, y = SHAP, color = Forest)) +
+  geom_point(alpha = 0.6) +
+  scale_color_viridis_c() +
+  labs(title = "Interaction: Cropland vs Forest", x = "Cropland (%)", y = "SHAP value")
+
+# 8. 突变点检测与情景模拟量化贡献 -----------------------------------------
+# 8.1 Pettitt 突变检验（在整个流域尺度）
+# 按年份聚合径流（模拟流域总径流）
+basin_flow <- sim_data %>%
+  group_by(Year) %>%
+  summarise(TotalFlow = sum(Streamflow)) %>%
+  pull(TotalFlow)
+
+pettitt_test <- pettitt.test(basin_flow)
+change_year <- pettitt_test$estimate
+cat("突变年份：", change_year, "\n")
+
+# 8.2 划分基准期与变化期
+baseline_years <- 1982:change_year
+change_years <- (change_year + 1):2020
+
+# 8.3 情景组合（模拟，真实情景需使用固定气候/土地利用数据）
+# 这里简化：用训练好的 XGBoost 预测不同输入组合
+# 实际应用中需要准备 C1, C2, LU1, LU2 四种数据组合
+
+# 模拟四种情景数据（示意）
+scenario_data <- list(
+  C1_LU1 = sim_data[sim_data$Year %in% baseline_years, ],      # 基准气候+基准LU
+  C2_LU2 = sim_data[sim_data$Year %in% change_years, ],        # 变化气候+变化LU
+  C2_LU1 = sim_data[sim_data$Year %in% change_years, ] %>%      # 变化气候+基准LU
+    mutate(Precipitation = sim_data[sim_data$Year %in% baseline_years, "Precipitation"]),
+  C1_LU2 = sim_data[sim_data$Year %in% baseline_years, ] %>%    # 基准气候+变化LU
+    mutate(Precipitation = sim_data[sim_data$Year %in% change_years, "Precipitation"])
+)
+
+# 预测各情景径流
+predict_scenario <- function(scene_df) {
+  X_scene <- as.matrix(scene_df[, features])
+  pred <- predict(xgb_model, X_scene)
+  return(mean(pred))
+}
+
+Q_C1_LU1 <- predict_scenario(scenario_data$C1_LU1)
+Q_C2_LU2 <- predict_scenario(scenario_data$C2_LU2)
+Q_C2_LU1 <- predict_scenario(scenario_data$C2_LU1)
+Q_C1_LU2 <- predict_scenario(scenario_data$C1_LU2)
+
+# 8.4 计算气候与土地利用贡献（公式10-11）
+delta_Q_total <- Q_C2_LU2 - Q_C1_LU1
+delta_Q_clim <- 0.5 * ((Q_C2_LU1 - Q_C1_LU1) + (Q_C2_LU2 - Q_C1_LU2))
+delta_Q_land <- 0.5 * ((Q_C1_LU2 - Q_C1_LU1) + (Q_C2_LU2 - Q_C2_LU1))
+
+contrib_clim <- delta_Q_clim / delta_Q_total * 100
+contrib_land <- delta_Q_land / delta_Q_total * 100
+
+cat("总径流变化:", delta_Q_total, "m³/s\n")
+cat("气候变化贡献:", contrib_clim, "%\n")
+cat("土地利用变化贡献:", contrib_land, "%\n")
+
+# 9. 可视化结果汇总 ----------------------------------------------------
+# 图7：模型性能对比
+perf_df <- data.frame(
+  Observed = y_test,
+  XGBoost = pred_xgb,
+  RandomForest = pred_rf
+)
+ggplot(perf_df, aes(x = Observed)) +
+  geom_point(aes(y = XGBoost), color = "blue", alpha = 0.6) +
+  geom_point(aes(y = RandomForest), color = "red", alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(title = "Model Performance Comparison", y = "Simulated") +
+  theme_minimal()
+
+# 图10中的阈值效应示例（如 Forest 占比 vs SHAP）
+forest_shap <- interaction_plot_data %>%
+  select(Forest, SHAP) %>%
+  na.omit()
+ggplot(forest_shap, aes(x = Forest, y = SHAP)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  labs(title = "Nonlinear effect of Forest on streamflow", x = "Forest (%)", y = "SHAP value")
+
+# 10. 保存结果（可选）-------------------------------------------------
+# write.csv(eval_table, "model_evaluation.csv")
+# saveRDS(xgb_model, "xgb_model.rds")
+# saveRDS(shp, "shap_results.rds")
+
+cat("=== 复现分析完成 ===\n")
+cat("注意：当前使用模拟数据，实际应用请替换为真实SWAT输出和观测数据。\n")
