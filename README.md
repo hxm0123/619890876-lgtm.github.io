@@ -40,56 +40,38 @@ reproducible-project/
 
 1.  下载 / 克隆本项目到本地
 2.  打开 R/RStudio，设置工作目录：
-
 r
-
 运行
-
 ```
 setwd("D:/Desktop/reproducible-project")  # 请改为你本地的项目路径
 ```
-
 3.  安装并加载 renv（若未安装）：
-
 r
-
 运行
-
 ```
 install.packages("renv")
 library(renv)
 ```
-
 4.  一键恢复项目环境：
-
 r
-
 运行
-
 ```
 renv::restore()
 ```
-
 5.  出现提示时输入 `y` 确认，等待环境安装完成
-
 ## 4. 完整代码复现步骤
 
 环境恢复完成后，直接运行以下代码即可复现全部结果：
-
 r
-
 运行
-
 ```
 # 加载依赖包
 library(xgboost)
 library(randomForest)
 library(dplyr)
 library(ggplot2)
-
 # 固定随机种子（保证结果100%可重复）
 set.seed(42)
-
 # 1. 生成模拟数据（贴合论文变量与研究区特征）
 n <- 200
 data <- data.frame(
@@ -132,10 +114,8 @@ cat("土地利用贡献占比：", round(lu_contrib*100, 2), "%\n")
 write.csv(data, "滦河流域模拟数据.csv", row.names = FALSE)
 write.csv(data.frame(XGBoost_pred = xgb_pred, RF_pred = rf_pred, Observed = test_data$Streamflow), "模型预测结果.csv", row.names = FALSE)
 ```
-
 ----------
-
-## 5. 预期复现结果
+## 5. 复现结果
 
 -   模型评估：XGBoost 模型表现优于随机森林
 -   贡献占比：气候变化 ≈ 81.85%，土地利用变化 ≈ 18.15%
@@ -143,7 +123,6 @@ write.csv(data.frame(XGBoost_pred = xgb_pred, RF_pred = rf_pred, Observed = test
 -   可重复性：任意时间、任意电脑运行结果完全一致
 
 ----------
-
 ## 6. 可复现性说明
 
 ✅ **环境可重建**：通过 renv.lock 实现依赖包版本精准控制
