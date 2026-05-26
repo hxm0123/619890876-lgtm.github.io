@@ -123,6 +123,10 @@ write.csv(data.frame(XGBoost_pred = xgb_pred, RF_pred = rf_pred, Observed = test
 -   贡献占比：气候变化 ≈ 81.85%，土地利用变化 ≈ 18.15%
 -   结果文件：自动生成两个 csv 结果文件，可直接查看
 -   可重复性：任意时间、任意电脑运行结果完全一致
+-   <img width="2400" height="1500" alt="图1_变量重要性" src="https://github.com/user-attachments/assets/0dbffddc-6d03-461e-8821-1bc9b0034f39" />
+<img width="2400" height="1500" alt="图2_预测vs观测" src="https://github.com/user-attachments/assets/d6e4d768-7a84-4830-bc16-9e8bd993f1e7" />
+<img width="2400" height="1500" alt="图3_降水影响" src="https://github.com/user-attachments/assets/d46f3300-1f5e-449b-9a94-3fe3588570ed" />
+<img width="2400" height="1500" alt="图4_林地影响" src="https://github.com/user-attachments/assets/270e8948-79dd-45f7-b195-e28f5a4dcc1b" />
 
 ----------
 ## 6. 可复现性说明
