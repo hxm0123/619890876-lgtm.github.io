@@ -67,13 +67,16 @@ renv::restore()
 r
 运行
 ```
+
 # 加载依赖包
 library(xgboost)
 library(randomForest)
 library(dplyr)
 library(ggplot2)
+
 # 固定随机种子（保证结果100%可重复）
 set.seed(42)
+
 # 1. 生成模拟数据（贴合论文变量与研究区特征）
 n <- 200
 data <- data.frame(
@@ -107,21 +110,79 @@ lu_effect <- ifelse(test_data$Forest>0.3&test_data$Forest<0.5, 0.4, -0.2)
 climate_contrib <- sum(abs(climate_effect)) / (sum(abs(climate_effect)) + sum(abs(lu_effect)))
 lu_contrib <- sum(abs(lu_effect)) / (sum(abs(climate_effect)) + sum(abs(lu_effect)))
 
-# 输出核心结果
+# 5. 输出核心结果
 cat("XGBoost R2 =", round(xgb_r2, 3), "\n")
 cat("气候变化贡献占比：", round(climate_contrib*100, 2), "%\n")
 cat("土地利用贡献占比：", round(lu_contrib*100, 2), "%\n")
 
-# 保存结果
+# 6. 保存结果
 write.csv(data, "滦河流域模拟数据.csv", row.names = FALSE)
 write.csv(data.frame(XGBoost_pred = xgb_pred, RF_pred = rf_pred, Observed = test_data$Streamflow), "模型预测结果.csv", row.names = FALSE)
+
+# 7. 设置工作目录
+setwd("D:/Desktop/reproducible-project")
+
+# 8. 加载包
+library(xgboost)
+library(dplyr)
+library(ggplot2)
+
+# 9. 读取 CSV 文件
+data <- read.csv("滦河流域模拟数据.csv")
+pred <- read.csv("模型预测结果.csv")
+
+# 10. 训练模型
+set.seed(42)
+x <- as.matrix(data %>% select(-Streamflow))
+y <- data$Streamflow
+model <- xgboost(data = x, label = y, nrounds = 50, verbose = 0)
+
+# 11. 变量重要性
+imp <- xgb.importance(model = model)
+
+# 12. 保存路径（保存到桌面）
+path <- "~/Desktop/"
+
+# 图1：变量重要性柱状图
+p1 <- ggplot(imp, aes(x=reorder(Feature, Gain), y=Gain)) +
+  geom_col(fill="steelblue") +
+  coord_flip() +
+  labs(title="径流主控因子重要性", x="因子", y="重要性") +
+  theme_bw()
+ggsave(paste0(path,"图1_变量重要性.png"), p1, width=8, height=5, dpi=300)
+
+# 图2：预测值 vs 观测值
+p2 <- ggplot(pred, aes(x=obs, y=pred)) +
+  geom_point(color="darkred", alpha=0.6) +
+  geom_abline(slope=1, intercept=0, linetype="dashed") +
+  labs(title="模型预测效果", x="观测径流", y="预测径流") +
+  theme_bw()
+ggsave(paste0(path,"图2_预测vs观测.png"), p2, width=8, height=5, dpi=300)
+
+# 图3：降水对径流的影响
+p3 <- ggplot(data, aes(x=Precipitation, y=Streamflow)) +
+  geom_point(alpha=0.5) +
+  geom_smooth(method="lm", color="red") +
+  labs(title="降水与径流关系", x="降水量", y="径流量") +
+  theme_bw()
+ggsave(paste0(path,"图3_降水影响.png"), p3, width=8, height=5, dpi=300)
+
+# 图4：林地对径流的影响
+p4 <- ggplot(data, aes(x=Forest, y=Streamflow)) +
+  geom_point(alpha=0.5) +
+  geom_smooth(method="loess", color="blue") +
+  labs(title="林地占比与径流关系", x="林地占比", y="径流量") +
+  theme_bw()
+ggsave(paste0(path,"图4_林地影响.png"), p4, width=8, height=5, dpi=300)
+
+cat("✅ 4 张图片已成功保存到桌面！")
 ```
 ----------
 ## 5. 复现结果
 
 -   模型评估：XGBoost 模型表现优于随机森林
 -   贡献占比：气候变化 ≈ 81.85%，土地利用变化 ≈ 18.15%
--   结果文件：自动生成两个 csv 结果文件，可直接查看
+-   结果文件：生成两个 csv 结果文件与四张复现数据图表，可直接查看
 -   可重复性：任意时间、任意电脑运行结果完全一致
 -   <img width="2400" height="1500" alt="图1_变量重要性" src="https://github.com/user-attachments/assets/0dbffddc-6d03-461e-8821-1bc9b0034f39" />
 <img width="2400" height="1500" alt="图2_预测vs观测" src="https://github.com/user-attachments/assets/d6e4d768-7a84-4830-bc16-9e8bd993f1e7" />
